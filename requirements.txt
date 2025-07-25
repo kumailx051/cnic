@@ -1,13 +1,5 @@
 flask>=2.3.0
 flask-socketio>=5.3.0
-python-socketio[client]>=5.8.0
-python-engineio>=4.7.0
 eventlet>=0.33.0
 gunicorn>=21.0.0
-Pillow>=10.0.0
-numpy>=1.24.0
-pyautogui>=0.9.54
-pynput>=1.7.6
-opencv-python>=4.8.0
-wheel>=0.40.0
-setuptools>=68.0.0
+
