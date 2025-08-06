@@ -44,7 +44,7 @@ def preprocess_text(text):
 
 def load_models():
     """Load the trained model and vectorizer with enhanced error handling"""
-    global model, vectorizer
+    global model, vectorizer, initialization_error
     
     try:
         # Get current working directory for debugging
@@ -55,55 +55,98 @@ def load_models():
         files = os.listdir('.')
         print(f"📁 Files in current directory: {files}")
         
+        # Check Python and scikit-learn versions
+        import sys
+        print(f"🐍 Python version: {sys.version}")
+        
+        try:
+            import sklearn
+            print(f"📚 Scikit-learn version: {sklearn.__version__}")
+        except ImportError as e:
+            error_msg = f"scikit-learn not available: {e}"
+            print(f"❌ {error_msg}")
+            initialization_error = error_msg
+            return False
+        
         # Check if model files exist
         model_file = 'spam_model.pkl'
         vectorizer_file = 'vectorizer.pkl'
         
         if not os.path.exists(model_file):
-            print(f"❌ {model_file} not found in {current_dir}")
+            error_msg = f"{model_file} not found in {current_dir}"
+            print(f"❌ {error_msg}")
+            initialization_error = error_msg
             return False
             
         if not os.path.exists(vectorizer_file):
-            print(f"❌ {vectorizer_file} not found in {current_dir}")
+            error_msg = f"{vectorizer_file} not found in {current_dir}"
+            print(f"❌ {error_msg}")
+            initialization_error = error_msg
             return False
         
         print(f"✅ Both model files found")
         
-        # Load the spam detection model
-        print(f"🤖 Loading {model_file}...")
-        with open(model_file, 'rb') as f:
-            model = pickle.load(f)
-        print(f"✅ Model loaded successfully! Type: {type(model)}")
+        # Check file sizes
+        model_size = os.path.getsize(model_file)
+        vectorizer_size = os.path.getsize(vectorizer_file)
+        print(f"📦 File sizes - Model: {model_size} bytes, Vectorizer: {vectorizer_size} bytes")
         
-        # Load the TF-IDF vectorizer
+        if model_size == 0 or vectorizer_size == 0:
+            error_msg = "One or both model files are empty (0 bytes)"
+            print(f"❌ {error_msg}")
+            initialization_error = error_msg
+            return False
+        
+        # Load the spam detection model with specific error handling
+        print(f"🤖 Loading {model_file}...")
+        try:
+            with open(model_file, 'rb') as f:
+                model = pickle.load(f)
+            print(f"✅ Model loaded successfully! Type: {type(model)}")
+        except Exception as e:
+            error_msg = f"Failed to load {model_file}: {type(e).__name__}: {str(e)}"
+            print(f"❌ {error_msg}")
+            initialization_error = error_msg
+            return False
+        
+        # Load the TF-IDF vectorizer with specific error handling
         print(f"🔤 Loading {vectorizer_file}...")
-        with open(vectorizer_file, 'rb') as f:
-            vectorizer = pickle.load(f)
-        print(f"✅ Vectorizer loaded successfully! Type: {type(vectorizer)}")
+        try:
+            with open(vectorizer_file, 'rb') as f:
+                vectorizer = pickle.load(f)
+            print(f"✅ Vectorizer loaded successfully! Type: {type(vectorizer)}")
+        except Exception as e:
+            error_msg = f"Failed to load {vectorizer_file}: {type(e).__name__}: {str(e)}"
+            print(f"❌ {error_msg}")
+            initialization_error = error_msg
+            return False
         
         # Test a quick prediction to ensure everything works
-        test_text = "test message"
-        processed_text = preprocess_text(test_text)
-        features = vectorizer.transform([processed_text])
-        test_prediction = model.predict(features)[0]
-        print(f"🧪 Model test successful - prediction: {test_prediction}")
+        print(f"🧪 Testing model functionality...")
+        try:
+            test_text = "test message"
+            processed_text = preprocess_text(test_text)
+            features = vectorizer.transform([processed_text])
+            test_prediction = model.predict(features)[0]
+            test_proba = model.predict_proba(features)[0]
+            print(f"✅ Model test successful - prediction: {test_prediction}, probabilities: {test_proba}")
+        except Exception as e:
+            error_msg = f"Model test failed: {type(e).__name__}: {str(e)}"
+            print(f"❌ {error_msg}")
+            initialization_error = error_msg
+            return False
         
         print("✅ All models loaded and tested successfully!")
+        initialization_error = None
         return True
         
-    except FileNotFoundError as e:
-        print(f"❌ File not found error: {e}")
-        print(f"   Current directory: {os.getcwd()}")
-        print(f"   Directory contents: {os.listdir('.')}")
-        return False
-    except ImportError as e:
-        print(f"❌ Import error (missing dependencies): {e}")
-        return False
     except Exception as e:
-        print(f"❌ Unexpected error loading models: {e}")
-        print(f"   Error type: {type(e).__name__}")
+        error_msg = f"Unexpected error in load_models: {type(e).__name__}: {str(e)}"
+        print(f"❌ {error_msg}")
+        initialization_error = error_msg
         import traceback
-        print(f"   Traceback: {traceback.format_exc()}")
+        traceback_str = traceback.format_exc()
+        print(f"   Full traceback: {traceback_str}")
         return False
 
 # Load models immediately when the module is imported - WITH BETTER ERROR HANDLING
