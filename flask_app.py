@@ -14,25 +14,67 @@ model = None
 vectorizer = None
 
 def load_models():
-    """Load the trained model and vectorizer"""
+    """Load the trained model and vectorizer with enhanced error handling"""
     global model, vectorizer
     
     try:
+        # Get current working directory for debugging
+        current_dir = os.getcwd()
+        print(f"🔍 Current working directory: {current_dir}")
+        
+        # List files in current directory
+        files = os.listdir('.')
+        print(f"📁 Files in current directory: {files}")
+        
+        # Check if model files exist
+        model_file = 'spam_model.pkl'
+        vectorizer_file = 'vectorizer.pkl'
+        
+        if not os.path.exists(model_file):
+            print(f"❌ {model_file} not found in {current_dir}")
+            return False
+            
+        if not os.path.exists(vectorizer_file):
+            print(f"❌ {vectorizer_file} not found in {current_dir}")
+            return False
+        
+        print(f"✅ Both model files found")
+        
         # Load the spam detection model
-        with open('spam_model.pkl', 'rb') as f:
+        print(f"🤖 Loading {model_file}...")
+        with open(model_file, 'rb') as f:
             model = pickle.load(f)
+        print(f"✅ Model loaded successfully! Type: {type(model)}")
         
         # Load the TF-IDF vectorizer
-        with open('vectorizer.pkl', 'rb') as f:
+        print(f"🔤 Loading {vectorizer_file}...")
+        with open(vectorizer_file, 'rb') as f:
             vectorizer = pickle.load(f)
+        print(f"✅ Vectorizer loaded successfully! Type: {type(vectorizer)}")
         
-        print("✅ Models loaded successfully!")
+        # Test a quick prediction to ensure everything works
+        test_text = "test message"
+        processed_text = preprocess_text(test_text)
+        features = vectorizer.transform([processed_text])
+        test_prediction = model.predict(features)[0]
+        print(f"🧪 Model test successful - prediction: {test_prediction}")
+        
+        print("✅ All models loaded and tested successfully!")
         return True
+        
     except FileNotFoundError as e:
-        print(f"❌ Error loading models: {e}")
+        print(f"❌ File not found error: {e}")
+        print(f"   Current directory: {os.getcwd()}")
+        print(f"   Directory contents: {os.listdir('.')}")
+        return False
+    except ImportError as e:
+        print(f"❌ Import error (missing dependencies): {e}")
         return False
     except Exception as e:
         print(f"❌ Unexpected error loading models: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        import traceback
+        print(f"   Traceback: {traceback.format_exc()}")
         return False
 
 def preprocess_text(text):
@@ -291,6 +333,34 @@ def batch_predict():
             'success': False,
             'error': str(e),
             'code': 'BATCH_PREDICTION_ERROR'
+        }), 500
+
+@app.route('/api/debug', methods=['GET'])
+def debug_info():
+    """Debug endpoint to check server status and file system"""
+    try:
+        import sys
+        debug_data = {
+            'success': True,
+            'data': {
+                'python_version': sys.version,
+                'current_directory': os.getcwd(),
+                'directory_contents': os.listdir('.'),
+                'model_loaded': model is not None,
+                'vectorizer_loaded': vectorizer is not None,
+                'model_type': str(type(model)) if model else None,
+                'vectorizer_type': str(type(vectorizer)) if vectorizer else None,
+                'environment': dict(os.environ),
+                'sys_path': sys.path
+            },
+            'timestamp': datetime.now().isoformat()
+        }
+        return jsonify(debug_data)
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
         }), 500
 
 @app.route('/api/health', methods=['GET'])
