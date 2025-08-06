@@ -106,21 +106,38 @@ def load_models():
         print(f"   Traceback: {traceback.format_exc()}")
         return False
 
-# Load models immediately when the module is imported (THIS IS THE KEY FIX!)
+# Load models immediately when the module is imported - WITH BETTER ERROR HANDLING
 print("🚀 Initializing Spam Detection API...")
+initialization_error = None
 try:
-    load_models()
-    if model is not None and vectorizer is not None:
+    if load_models():
         print("✅ Models loaded successfully during initialization")
     else:
+        initialization_error = "Model loading returned False"
         print("⚠️ Warning: Models failed to load during initialization")
 except Exception as e:
+    initialization_error = str(e)
     print(f"❌ Error during model initialization: {e}")
+    import traceback
+    print(f"Full traceback: {traceback.format_exc()}")
+
+def ensure_models_loaded():
+    """Ensure models are loaded, try to load them if not"""
+    global model, vectorizer
+    
+    if model is None or vectorizer is None:
+        print("⚠️ Models not loaded, attempting to load now...")
+        return load_models()
+    return True
 
 def predict_spam(message):
     """Predict if a message is spam"""
+    # Ensure models are loaded before prediction
+    if not ensure_models_loaded():
+        raise ValueError("Models could not be loaded")
+    
     if model is None or vectorizer is None:
-        raise ValueError("Models not loaded")
+        raise ValueError("Models not loaded after ensure_models_loaded")
     
     # Preprocess and vectorize
     processed = preprocess_text(message)
@@ -361,6 +378,7 @@ def debug_info():
                 'vectorizer_loaded': vectorizer is not None,
                 'model_type': str(type(model)) if model else None,
                 'vectorizer_type': str(type(vectorizer)) if vectorizer else None,
+                'initialization_error': initialization_error,
                 'environment': dict(os.environ),
                 'sys_path': sys.path
             },
@@ -376,8 +394,11 @@ def debug_info():
 
 @app.route('/api/health', methods=['GET'])
 def health():
-    """Health check endpoint with model status for Flutter"""
+    """Health check endpoint with model status for Flutter - TRIES TO LOAD MODELS IF NOT LOADED"""
+    # Try to ensure models are loaded
+    models_loaded = ensure_models_loaded()
     model_status = 'loaded' if model is not None and vectorizer is not None else 'not loaded'
+    
     return jsonify({
         'success': True,
         'data': {
@@ -387,6 +408,8 @@ def health():
             'version': '1.0.0',
             'endpoints_available': 3,
             'uptime': 'running',
+            'models_loaded_on_health_check': models_loaded,
+            'initialization_error': initialization_error,
             'timestamp': datetime.now().isoformat()
         },
         'message': 'API is healthy and ready to process requests'
@@ -396,6 +419,8 @@ def health():
 @app.route('/health', methods=['GET'])
 def health_legacy():
     """Legacy health check endpoint"""
+    # Try to ensure models are loaded
+    ensure_models_loaded()
     model_status = 'loaded' if model is not None and vectorizer is not None else 'not loaded'
     return jsonify({
         'status': 'healthy',
