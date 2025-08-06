@@ -393,7 +393,11 @@ if __name__ == '__main__':
         print("❌ Failed to load models. Please ensure spam_model.pkl and vectorizer.pkl exist.")
         exit(1)
     
-    print("🌐 Starting server on http://localhost:5000")
+    # Get port from environment variable for Azure deployment
+    import os
+    port = int(os.environ.get('PORT', 5000))
+    
+    print(f"🌐 Starting server on port {port}")
     print("� Flutter-Ready API Endpoints:")
     print("  GET  /                    - API information")
     print("  GET  /api/health          - Health check")
@@ -403,9 +407,9 @@ if __name__ == '__main__':
     print("  GET  /health              - Legacy health check")
     print("  POST /predict             - Legacy single prediction")
     print("\n📱 Flutter HTTP Examples:")
-    print("  POST http://localhost:5000/api/predict")
+    print(f"  POST http://localhost:{port}/api/predict")
     print("  Body: {\"message\": \"Your message here\"}")
     print("\n✅ CORS enabled for Flutter app access")
     
     # Run the Flask app with host 0.0.0.0 for external access
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=False)
