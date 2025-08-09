@@ -1,9 +1,7 @@
 Flask
-Flask-CORS
-gunicorn
-eventlet
-scikit-learn
-numpy
-pandas
-joblib
+flask-cors
 tensorflow
+numpy
+Pillow
+Werkzeug
+gunicorn
