@@ -1,41 +1,51 @@
-#!/usr/bin/env python3
-"""
-Azure Web App (Flask) - WebSocket Version
-Flask app configured for Azure App Service with WebSocket support
-Supports multiple simultaneous controller and target connections
-"""
-
 from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from datetime import datetime
 import json
 import base64
 import os
+import threading
+import queue
+import time
 
-# Create Flask app with SocketIO - Azure optimized
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'remote_desktop_secret_key_azure')
 
-# Configure SocketIO for Azure
+# Configure SocketIO for maximum performance
 socketio = SocketIO(
     app, 
     cors_allowed_origins="*",
-    async_mode='eventlet',  # Better for Azure
-    logger=True,
-    engineio_logger=True,
-    ping_timeout=60,
-    ping_interval=25
+    async_mode='eventlet',
+    logger=False,
+    engineio_logger=False,
+    ping_timeout=30,        # Reduced for faster detection of disconnects
+    ping_interval=10,       # More frequent pings for better connection monitoring
+    max_http_buffer_size=20000000,  # 20MB buffer for large images
+    compression=True,       # Enable compression for better bandwidth usage
+    always_connect=True,    # Ensure connections are always available
+    binary=True            # Enable binary mode for better image transmission
 )
 
-# Server status variables
+# Server status variables with performance tracking
 server_status = {
     'start_time': datetime.now(),
     'controllers': {},  # Store multiple controllers
     'targets': {},      # Store multiple targets
     'total_connections': 0,
     'controller_connections': 0,
-    'target_connections': 0
+    'target_connections': 0,
+    'active_sessions': {},  # Track controller-target pairs
+    'performance_stats': {
+        'frames_processed': 0,
+        'total_data_transferred': 0,
+        'average_frame_size': 0,
+        'last_frame_time': 0
+    }
 }
+
+# High-performance message queue for screen data
+screen_data_queue = queue.Queue(maxsize=100)  # Limit queue size to prevent memory issues
+frame_drop_counter = 0
 
 @app.route('/')
 def status_page():
@@ -250,59 +260,230 @@ def on_disconnect():
 
 @socketio.on('join_as_controller')
 def on_join_controller(data):
+    controller_id = data.get('controller_id', request.sid)
     server_status['controllers'][request.sid] = {
         'ip': request.environ.get('REMOTE_ADDR', 'Unknown'),
-        'timestamp': datetime.now()
+        'timestamp': datetime.now(),
+        'controller_id': controller_id
     }
     server_status['controller_connections'] += 1
     
+    # Join specific controller room
+    join_room(f'controller_{controller_id}')
     join_room('controllers')
-    emit('connection_status', {'status': 'connected', 'type': 'controller'})
-    print(f"Controller joined: {request.sid}")
+    emit('connection_status', {'status': 'connected', 'type': 'controller', 'controller_id': controller_id})
+    print(f"Controller joined: {request.sid} with ID: {controller_id}")
 
 @socketio.on('join_as_target')
 def on_join_target(data):
+    target_id = data.get('target_id', request.sid)
     server_status['targets'][request.sid] = {
         'ip': request.environ.get('REMOTE_ADDR', 'Unknown'),
-        'timestamp': datetime.now()
+        'timestamp': datetime.now(),
+        'target_id': target_id
     }
     server_status['target_connections'] += 1
     
+    # Join specific target room
+    join_room(f'target_{target_id}')
     join_room('targets')
-    emit('connection_status', {'status': 'connected', 'type': 'target'})
-    print(f"Target joined: {request.sid}")
+    emit('connection_status', {'status': 'connected', 'type': 'target', 'target_id': target_id})
+    print(f"Target joined: {request.sid} with ID: {target_id}")
 
-@socketio.on('control_event')
-def on_control_event(data):
-    """Forward control events from controller to all targets"""
-    if request.sid in server_status['controllers'] and server_status['targets']:
-        socketio.emit('control_command', data, room='targets')
-        print(f"Forwarded control event: {data['type']} to {len(server_status['targets'])} targets")
+@socketio.on('pair_with_target')
+def on_pair_with_target(data):
+    """Controller requesting to pair with a specific target"""
+    controller_sid = request.sid
+    target_id = data.get('target_id')
+    
+    if controller_sid in server_status['controllers']:
+        # Find target by ID
+        target_sid = None
+        for sid, target_info in server_status['targets'].items():
+            if target_info.get('target_id') == target_id:
+                target_sid = sid
+                break
+        
+        if target_sid:
+            # Create session pair
+            session_id = f"session_{controller_sid}_{target_sid}"
+            server_status['active_sessions'][session_id] = {
+                'controller': controller_sid,
+                'target': target_sid,
+                'timestamp': datetime.now()
+            }
+            
+            # Join session room
+            join_room(session_id)
+            socketio.server.enter_room(target_sid, session_id)
+            
+            emit('pairing_success', {'target_id': target_id, 'session_id': session_id})
+            socketio.emit('controller_paired', {'controller_id': server_status['controllers'][controller_sid]['controller_id'], 'session_id': session_id}, room=target_sid)
+            print(f"Paired controller {controller_sid} with target {target_sid}")
+        else:
+            emit('pairing_failed', {'error': 'Target not found'})
 
 @socketio.on('screen_data')
 def on_screen_data(data):
-    """Forward screen data from target to all controllers"""
-    if request.sid in server_status['targets'] and server_status['controllers']:
-        socketio.emit('screen_update', data, room='controllers')
-        # Only log occasionally to avoid spam
-        if server_status['total_connections'] % 100 == 0:
-            print(f"Forwarded screen data to {len(server_status['controllers'])} controllers")
+    """High-performance screen data handler with frame dropping"""
+    global frame_drop_counter
+    target_sid = request.sid
+    session_id = data.get('session_id')
+    
+    if target_sid not in server_status['targets']:
+        return
+    
+    # Performance optimization: Drop frames if queue is getting full
+    current_queue_size = screen_data_queue.qsize()
+    
+    if current_queue_size > 5:  # If more than 5 frames waiting, drop this frame
+        frame_drop_counter += 1
+        if frame_drop_counter % 10 == 0:  # Log every 10th dropped frame
+            print(f"Dropped {frame_drop_counter} frames for performance")
+        return
+    
+    # Add timestamp for latency tracking
+    data['server_timestamp'] = time.time()
+    
+    # Update performance stats
+    image_size = len(data.get('image', ''))
+    server_status['performance_stats']['frames_processed'] += 1
+    server_status['performance_stats']['total_data_transferred'] += image_size
+    server_status['performance_stats']['last_frame_time'] = time.time()
+    
+    # Calculate average frame size
+    frames = server_status['performance_stats']['frames_processed']
+    total_data = server_status['performance_stats']['total_data_transferred']
+    server_status['performance_stats']['average_frame_size'] = total_data / frames if frames > 0 else 0
+    
+    # Fast routing based on session
+    if session_id and session_id in server_status['active_sessions']:
+        # Direct emit to specific session - fastest path
+        socketio.emit('screen_update', data, room=session_id, binary=True)
+    else:
+        # Fallback: broadcast to all controllers
+        socketio.emit('screen_update', data, room='controllers', binary=True)
+
+@socketio.on('control_event')
+def on_control_event(data):
+    """High-performance control event handler"""
+    controller_sid = request.sid
+    session_id = data.get('session_id')
+    
+    if controller_sid not in server_status['controllers']:
+        return
+    
+    # Add timestamp for latency tracking
+    data['server_timestamp'] = time.time()
+    
+    # Fast routing - prioritize session-based routing
+    if session_id and session_id in server_status['active_sessions']:
+        # Direct emit to specific target - fastest path
+        socketio.emit('control_command', data, room=session_id, binary=True)
+    else:
+        # Fallback: broadcast to all targets
+        socketio.emit('control_command', data, room='targets', binary=True)
+
+@socketio.on('screenshot_request')
+def on_screenshot_request(data):
+    """High-performance screenshot request handler"""
+    controller_sid = request.sid
+    session_id = data.get('session_id')
+    
+    if controller_sid in server_status['controllers']:
+        data['server_timestamp'] = time.time()
+        if session_id and session_id in server_status['active_sessions']:
+            socketio.emit('take_screenshot', data, room=session_id, binary=True)
+        else:
+            socketio.emit('take_screenshot', data, room='targets', binary=True)
+
+@socketio.on('screenshot_data')
+def on_screenshot_data(data):
+    """High-performance screenshot data handler"""
+    target_sid = request.sid
+    session_id = data.get('session_id')
+    
+    if target_sid in server_status['targets']:
+        data['server_timestamp'] = time.time()
+        if session_id and session_id in server_status['active_sessions']:
+            socketio.emit('screenshot_response', data, room=session_id, binary=True)
+        else:
+            socketio.emit('screenshot_response', data, room='controllers', binary=True)
+
+@socketio.on('terminal_command')
+def on_terminal_command(data):
+    """High-performance terminal command handler"""
+    controller_sid = request.sid
+    session_id = data.get('session_id')
+    
+    if controller_sid in server_status['controllers']:
+        data['server_timestamp'] = time.time()
+        if session_id and session_id in server_status['active_sessions']:
+            socketio.emit('execute_terminal', data, room=session_id, binary=True)
+        else:
+            socketio.emit('execute_terminal', data, room='targets', binary=True)
+
+@socketio.on('terminal_output')
+def on_terminal_output(data):
+    """High-performance terminal output handler"""
+    target_sid = request.sid
+    session_id = data.get('session_id')
+    
+    if target_sid in server_status['targets']:
+        data['server_timestamp'] = time.time()
+        if session_id and session_id in server_status['active_sessions']:
+            socketio.emit('terminal_response', data, room=session_id, binary=True)
+        else:
+            socketio.emit('terminal_response', data, room='controllers', binary=True)
+
+@socketio.on('get_targets')
+def on_get_targets(data):
+    """Return list of available targets for controller"""
+    if request.sid in server_status['controllers']:
+        targets_list = []
+        for sid, target_info in server_status['targets'].items():
+            targets_list.append({
+                'target_id': target_info.get('target_id', sid),
+                'ip': target_info.get('ip', 'Unknown'),
+                'timestamp': target_info.get('timestamp').isoformat() if target_info.get('timestamp') else None
+            })
+        emit('targets_list', {'targets': targets_list})
+
+@app.route("/test")
+def test():
+    return "Hello from Flask on Azure! SocketIO Server is running!"
+
+@app.route("/performance")
+def performance():
+    """Performance monitoring endpoint"""
+    global frame_drop_counter
+    
+    uptime = datetime.now() - server_status['start_time']
+    stats = server_status['performance_stats']
+    
+    # Calculate performance metrics
+    frames_per_second = 0
+    if uptime.total_seconds() > 0:
+        frames_per_second = stats['frames_processed'] / uptime.total_seconds()
+    
+    avg_frame_size_mb = stats['average_frame_size'] / (1024 * 1024) if stats['average_frame_size'] > 0 else 0
+    total_data_gb = stats['total_data_transferred'] / (1024 * 1024 * 1024)
+    
+    performance_data = {
+        "server_uptime": str(uptime).split('.')[0],
+        "total_frames_processed": stats['frames_processed'],
+        "frames_per_second": round(frames_per_second, 2),
+        "average_frame_size_mb": round(avg_frame_size_mb, 2),
+        "total_data_transferred_gb": round(total_data_gb, 2),
+        "frames_dropped": frame_drop_counter,
+        "active_sessions": len(server_status['active_sessions']),
+        "connected_controllers": len(server_status['controllers']),
+        "connected_targets": len(server_status['targets']),
+        "last_frame_time": stats['last_frame_time'],
+        "queue_size": screen_data_queue.qsize()
+    }
+    
+    return json.dumps(performance_data, indent=2)
 
 if __name__ == '__main__':
-    # Azure App Service configuration
-    port = int(os.environ.get('PORT', 5000))
-    host = '0.0.0.0'
-    
-    print(f"🚀 Starting Remote Desktop Server on Azure")
-    print(f"   Host: {host}")
-    print(f"   Port: {port}")
-    print(f"   WebSocket Support: ✅ Enabled")
-    print(f"   Async Mode: eventlet")
-    
-    socketio.run(
-        app, 
-        host=host, 
-        port=port, 
-        debug=False,  # Set to False for production on Azure
-        use_reloader=False
-    )
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
