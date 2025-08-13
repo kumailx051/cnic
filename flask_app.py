@@ -1,135 +1,308 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing import image
-import numpy as np
+#!/usr/bin/env python3
+"""
+Azure Web App (Flask) - WebSocket Version
+Flask app configured for Azure App Service with WebSocket support
+Supports multiple simultaneous controller and target connections
+"""
+
+from flask import Flask, render_template_string
+from flask_socketio import SocketIO, emit, join_room, leave_room, request
+from datetime import datetime
+import json
+import base64
 import os
-from werkzeug.utils import secure_filename
-import logging
 
+# Create Flask app with SocketIO - Azure optimized
 app = Flask(__name__)
-CORS(app)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'remote_desktop_secret_key_azure')
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure SocketIO for Azure
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*",
+    async_mode='eventlet',  # Better for Azure
+    logger=True,
+    engineio_logger=True,
+    ping_timeout=60,
+    ping_interval=25
+)
 
-# Load model
-MODEL_PATH = "cnic_model.h5"
-try:
-    model = load_model(MODEL_PATH)
-    logger.info("✅ Model loaded successfully")
-except Exception as e:
-    logger.error(f"❌ Failed to load model: {e}")
-    model = None
+# Server status variables
+server_status = {
+    'start_time': datetime.now(),
+    'controllers': {},  # Store multiple controllers
+    'targets': {},      # Store multiple targets
+    'total_connections': 0,
+    'controller_connections': 0,
+    'target_connections': 0
+}
 
-# Image size used during training
-IMG_SIZE = 224
-
-# Allowed image extensions
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
-
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-@app.route("/")
-def home():
-    return "✅ CNIC Classifier API is up and running!"
-
-@app.route("/predict", methods=["POST"])
-def predict():
-    if model is None:
-        return jsonify({"error": "Model not loaded"}), 500
-
-    try:
-        # Check if file is in request
-        if 'file' not in request.files:
-            logger.warning("No file part in request")
-            return jsonify({"error": "No file part"}), 400
-
-        file = request.files['file']
-
-        if file.filename == '':
-            logger.warning("No file selected")
-            return jsonify({"error": "No selected file"}), 400
-
-        if not file or not allowed_file(file.filename):
-            logger.warning(f"Invalid file type: {file.filename}")
-            return jsonify({"error": "Invalid file type. Use PNG, JPG, or JPEG"}), 400
-
-        # Process the file
-        filename = secure_filename(file.filename)
-        file_path = os.path.join("uploads", filename)
-
-        # Create uploads directory if it doesn't exist
-        os.makedirs("uploads", exist_ok=True)
+@app.route('/')
+def status_page():
+    uptime = datetime.now() - server_status['start_time']
+    
+    controller_status = "🟢 Connected" if server_status['controllers'] else "🔴 Disconnected"
+    target_status = "🟢 Connected" if server_status['targets'] else "🔴 Disconnected"
+    
+    controller_info = ""
+    if server_status['controllers']:
+        controller_info = f"{len(server_status['controllers'])} active controllers"
         
-        # Save uploaded file temporarily
-        file.save(file_path)
-        logger.info(f"File saved: {filename}")
-
-        try:
-            # Preprocess image
-            img = image.load_img(file_path, target_size=(IMG_SIZE, IMG_SIZE))
-            img_array = image.img_to_array(img)
-            img_array = np.expand_dims(img_array, axis=0)
-            img_array = img_array / 255.0
-
-            # Predict
-            prediction = model.predict(img_array)[0][0]
+    target_info = ""
+    if server_status['targets']:
+        target_info = f"{len(server_status['targets'])} active targets"
+    
+    html_template = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Remote Desktop Server - Status</title>
+        <meta http-equiv="refresh" content="10">
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 40px; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container { 
+                max-width: 800px; 
+                margin: 0 auto; 
+                background: rgba(255,255,255,0.1);
+                padding: 30px;
+                border-radius: 15px;
+                backdrop-filter: blur(10px);
+                box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            }
+            .header { 
+                text-align: center; 
+                margin-bottom: 40px;
+                border-bottom: 2px solid rgba(255,255,255,0.3);
+                padding-bottom: 20px;
+            }
+            .status-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+                margin: 30px 0;
+            }
+            .status-card {
+                background: rgba(255,255,255,0.1);
+                padding: 20px;
+                border-radius: 10px;
+                border: 1px solid rgba(255,255,255,0.2);
+            }
+            .status-card h3 {
+                margin-top: 0;
+                color: #ffd700;
+            }
+            .info-section {
+                background: rgba(0,0,0,0.2);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+            }
+            .live-indicator {
+                display: inline-block;
+                width: 12px;
+                height: 12px;
+                background: #00ff00;
+                border-radius: 50%;
+                animation: pulse 2s infinite;
+                margin-right: 10px;
+            }
+            @keyframes pulse {
+                0% { opacity: 1; }
+                50% { opacity: 0.5; }
+                100% { opacity: 1; }
+            }
+            .footer {
+                text-align: center;
+                margin-top: 40px;
+                font-size: 0.9em;
+                opacity: 0.8;
+            }
+            code {
+                background: rgba(0,0,0,0.3);
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-family: 'Courier New', monospace;
+            }
+            .update-notice {
+                background: rgba(255, 215, 0, 0.2);
+                border: 1px solid rgba(255, 215, 0, 0.5);
+                padding: 15px;
+                border-radius: 10px;
+                margin: 20px 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🖥️ Remote Desktop Server</h1>
+                <p><span class="live-indicator"></span>Hosted on Azure App Service (WebSocket Optimized)</p>
+                <p><strong>Server Status:</strong> 🟢 Running</p>
+            </div>
             
-            # Match the logic from your Kaggle test:
-            # prediction > 0.5 = "not_cnic", prediction <= 0.5 = "cnic"
-            if prediction > 0.5:
-                label = "not_cnic"
-                confidence = prediction  # Higher score means more confident it's not_cnic
-            else:
-                label = "cnic"
-                confidence = 1 - prediction  # Lower score means more confident it's cnic
+            <div class="update-notice">
+                <h3>✅ Optimized for Azure</h3>
+                <p>Server uses WebSocket connections with eventlet async mode for optimal performance on Azure App Service.</p>
+                <p><strong>You need to update your controller and target programs!</strong></p>
+            </div>
+            
+            <div class="status-grid">
+                <div class="status-card">
+                    <h3>📱 Controller Status</h3>
+                    <p><strong>Status:</strong> {{ controller_status }}</p>
+                    {% if controller_info %}
+                    <p><strong>Connected from:</strong> {{ controller_info }}</p>
+                    {% endif %}
+                    <p><strong>Total Controller Connections:</strong> {{ controller_connections }}</p>
+                </div>
+                
+                <div class="status-card">
+                    <h3>🎯 Target Status</h3>
+                    <p><strong>Status:</strong> {{ target_status }}</p>
+                    {% if target_info %}
+                    <p><strong>Connected from:</strong> {{ target_info }}</p>
+                    {% endif %}
+                    <p><strong>Total Target Connections:</strong> {{ target_connections }}</p>
+                </div>
+            </div>
+            
+            <div class="info-section">
+                <h3>📊 Server Statistics</h3>
+                <p><strong>Server Started:</strong> {{ start_time }}</p>
+                <p><strong>Uptime:</strong> {{ uptime }}</p>
+                <p><strong>Total Connections:</strong> {{ total_connections }}</p>
+                <p><strong>Web Interface URL:</strong> https://your-app-name.azurewebsites.net/</p>
+            </div>
+            
+            <div class="info-section">
+                <h3>🔧 Connection Instructions (Updated)</h3>
+                <p><strong>For Controller (Your PC):</strong></p>
+                <ul>
+                    <li>Server URL: <code>https://your-app-name.azurewebsites.net</code></li>
+                    <li>Protocol: <code>WebSocket</code></li>
+                    <li>Run: <code>controller.py</code> (Azure optimized)</li>
+                </ul>
+                
+                <p><strong>For Target (PC to control):</strong></p>
+                <ul>
+                    <li>Server URL: <code>https://your-app-name.azurewebsites.net</code></li>
+                    <li>Protocol: <code>WebSocket</code></li>
+                    <li>Run: <code>target.py</code> (Azure optimized)</li>
+                </ul>
+            </div>
+            
+            <div class="info-section">
+                <h3>ℹ️ How it Works (Azure Version)</h3>
+                <p>This server uses WebSocket connections optimized for Azure App Service:</p>
+                <ol>
+                    <li><strong>Controller</strong> connects via WebSocket and sends control commands</li>
+                    <li><strong>Server</strong> relays commands through WebSocket rooms with eventlet async mode</li>
+                    <li><strong>Target</strong> receives commands and sends back screen data</li>
+                    <li><strong>Azure WebSocket support</strong> enables full real-time communication</li>
+                </ol>
+            </div>
+            
+            <div class="footer">
+                <p>🔄 Auto-refresh every 10 seconds | Last updated: {{ current_time }}</p>
+                <p>Remote Desktop WebSocket Server v3.0 | Powered by Azure App Service</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return render_template_string(html_template,
+        controller_status=controller_status,
+        target_status=target_status,
+        controller_info=controller_info,
+        target_info=target_info,
+        start_time=server_status['start_time'].strftime("%Y-%m-%d %H:%M:%S"),
+        uptime=str(uptime).split('.')[0],
+        total_connections=server_status['total_connections'],
+        controller_connections=server_status['controller_connections'],
+        target_connections=server_status['target_connections'],
+        current_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
 
-            logger.info(f"Prediction for {filename}: {label} (raw_score: {prediction:.4f}, confidence: {confidence:.4f})")
+@socketio.on('connect')
+def on_connect():
+    server_status['total_connections'] += 1
+    print(f"Client connected: {request.sid}")
 
-            # Delete file after prediction
-            if os.path.exists(file_path):
-                os.remove(file_path)
+@socketio.on('disconnect')
+def on_disconnect():
+    print(f"Client disconnected: {request.sid}")
+    
+    # Clean up if this was a controller or target
+    if request.sid in server_status['controllers']:
+        del server_status['controllers'][request.sid]
+        print("Controller disconnected")
+        
+    if request.sid in server_status['targets']:
+        del server_status['targets'][request.sid]
+        print("Target disconnected")
 
-            return jsonify({
-                "prediction_score": float(prediction),
-                "predicted_label": label,
-                "confidence": float(confidence),
-                "raw_score": float(prediction)  # For debugging
-            })
-
-        except Exception as e:
-            # Clean up file if processing failed
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            logger.error(f"Error processing image: {e}")
-            return jsonify({"error": f"Error processing image: {str(e)}"}), 500
-
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
-
-@app.route("/health", methods=["GET"])
-def health_check():
-    """Health check endpoint"""
-    status = {
-        "status": "healthy",
-        "model_loaded": model is not None,
-        "api_version": "1.0"
+@socketio.on('join_as_controller')
+def on_join_controller(data):
+    server_status['controllers'][request.sid] = {
+        'ip': request.environ.get('REMOTE_ADDR', 'Unknown'),
+        'timestamp': datetime.now()
     }
-    return jsonify(status)
+    server_status['controller_connections'] += 1
+    
+    join_room('controllers')
+    emit('connection_status', {'status': 'connected', 'type': 'controller'})
+    print(f"Controller joined: {request.sid}")
 
-if __name__ == "__main__":
-    print("🚀 Starting CNIC Classifier Server...")
-    print(f"📁 Model path: {MODEL_PATH}")
-    print(f"🖼️  Image size: {IMG_SIZE}x{IMG_SIZE}")
-    print(f"📋 Allowed extensions: {ALLOWED_EXTENSIONS}")
+@socketio.on('join_as_target')
+def on_join_target(data):
+    server_status['targets'][request.sid] = {
+        'ip': request.environ.get('REMOTE_ADDR', 'Unknown'),
+        'timestamp': datetime.now()
+    }
+    server_status['target_connections'] += 1
     
-    if model is None:
-        print("❌ WARNING: Model not loaded! Place 'cnic_model.h5' in the same directory.")
-    else:
-        print("✅ Model loaded successfully!")
+    join_room('targets')
+    emit('connection_status', {'status': 'connected', 'type': 'target'})
+    print(f"Target joined: {request.sid}")
+
+@socketio.on('control_event')
+def on_control_event(data):
+    """Forward control events from controller to all targets"""
+    if request.sid in server_status['controllers'] and server_status['targets']:
+        socketio.emit('control_command', data, room='targets')
+        print(f"Forwarded control event: {data['type']} to {len(server_status['targets'])} targets")
+
+@socketio.on('screen_data')
+def on_screen_data(data):
+    """Forward screen data from target to all controllers"""
+    if request.sid in server_status['targets'] and server_status['controllers']:
+        socketio.emit('screen_update', data, room='controllers')
+        # Only log occasionally to avoid spam
+        if server_status['total_connections'] % 100 == 0:
+            print(f"Forwarded screen data to {len(server_status['controllers'])} controllers")
+
+if __name__ == '__main__':
+    # Azure App Service configuration
+    port = int(os.environ.get('PORT', 5000))
+    host = '0.0.0.0'
     
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    print(f"🚀 Starting Remote Desktop Server on Azure")
+    print(f"   Host: {host}")
+    print(f"   Port: {port}")
+    print(f"   WebSocket Support: ✅ Enabled")
+    print(f"   Async Mode: eventlet")
+    
+    socketio.run(
+        app, 
+        host=host, 
+        port=port, 
+        debug=False,  # Set to False for production on Azure
+        use_reloader=False
+    )
