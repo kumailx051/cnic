@@ -271,8 +271,15 @@ def on_join_controller(data):
     # Join specific controller room
     join_room(f'controller_{controller_id}')
     join_room('controllers')
-    emit('connection_status', {'status': 'connected', 'type': 'controller', 'controller_id': controller_id})
+    
     print(f"Controller joined: {request.sid} with ID: {controller_id}")
+    
+    # Send confirmation
+    emit('connection_status', {
+        'status': 'connected', 
+        'type': 'controller', 
+        'controller_id': controller_id
+    })
 
 @socketio.on('join_as_target')
 def on_join_target(data):
@@ -287,8 +294,15 @@ def on_join_target(data):
     # Join specific target room
     join_room(f'target_{target_id}')
     join_room('targets')
-    emit('connection_status', {'status': 'connected', 'type': 'target', 'target_id': target_id})
+    
     print(f"Target joined: {request.sid} with ID: {target_id}")
+    
+    # Send confirmation
+    emit('connection_status', {
+        'status': 'connected', 
+        'type': 'target', 
+        'target_id': target_id
+    })
 
 @socketio.on('pair_with_target')
 def on_pair_with_target(data):
@@ -441,13 +455,21 @@ def on_get_targets(data):
     """Return list of available targets for controller"""
     if request.sid in server_status['controllers']:
         targets_list = []
+        print(f"Getting targets list. Current targets: {len(server_status['targets'])}")
+        
         for sid, target_info in server_status['targets'].items():
-            targets_list.append({
+            target_data = {
                 'target_id': target_info.get('target_id', sid),
                 'ip': target_info.get('ip', 'Unknown'),
                 'timestamp': target_info.get('timestamp').isoformat() if target_info.get('timestamp') else None
-            })
+            }
+            targets_list.append(target_data)
+            print(f"Found target: {target_data}")
+        
+        print(f"Sending {len(targets_list)} targets to controller {request.sid}")
         emit('targets_list', {'targets': targets_list})
+    else:
+        print(f"Request from non-controller: {request.sid}")
 
 @app.route("/test")
 def test():
