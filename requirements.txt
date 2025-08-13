@@ -1,7 +1,8 @@
 Flask
-flask-cors
-tensorflow
-numpy
-Pillow
-Werkzeug
+Flask-SocketIO
+python-socketio
+python-engineio
 gunicorn
+eventlet
+websocket-client
+python-dotenv
