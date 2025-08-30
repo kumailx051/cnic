@@ -1,5 +1,8 @@
 fastapi
 uvicorn[standard]
-pillow
+python-multipart
+pydantic
+requests
 numpy
 tensorflow
+azure-storage-blob
