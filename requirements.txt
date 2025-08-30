@@ -1,8 +1,5 @@
-Flask
-Flask-SocketIO
-python-socketio
-python-engineio
-gunicorn
-eventlet
-websocket-client
-python-dotenv
+fastapi
+uvicorn[standard]
+pillow
+numpy
+tensorflow-cpu==2.11.0
