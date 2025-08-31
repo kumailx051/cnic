@@ -1,8 +1,0 @@
-fastapi
-uvicorn[standard]
-python-multipart
-pydantic
-requests
-numpy
-tensorflow
-azure-storage-blob
