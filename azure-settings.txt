@@ -1,0 +1,12 @@
+# Azure App Service settings
+# Add these as Application Settings in Azure Portal
+
+WEBSITES_PORT=8000
+PYTHONPATH=/home/site/wwwroot
+FLASK_APP=app.py
+FLASK_ENV=production
+SCM_DO_BUILD_DURING_DEPLOYMENT=true
+
+# Optional: For better performance
+WEBSITES_ENABLE_APP_SERVICE_STORAGE=false
+WEBSITES_CONTAINER_START_TIME_LIMIT=1800
