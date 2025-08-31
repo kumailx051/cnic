@@ -77,8 +77,8 @@ curl -X POST \
 ### Setup
 1. Clone the repository:
 ```bash
-git clone https://github.com/kumailx051/APT.git
-cd APT
+git clone https://github.com/kumailx051/cnic.git
+cd cnic
 ```
 
 2. Install dependencies:
@@ -128,7 +128,7 @@ az webapp config appsettings set \
 az webapp deployment source config \
     --name cnic-api-app \
     --resource-group cnic-api-rg \
-    --repo-url https://github.com/kumailx051/APT.git \
+    --repo-url https://github.com/kumailx051/cnic.git \
     --branch main \
     --manual-integration
 ```
