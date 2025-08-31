@@ -15,7 +15,7 @@ A machine learning API built with Flask and TensorFlow to detect whether an uplo
 - **Backend**: Flask (Python)
 - **ML Framework**: TensorFlow/Keras
 - **Image Processing**: PIL (Pillow)
-- **Deployment**: Azure App Service, Docker
+- **Deployment**: Azure App Service
 - **Server**: Gunicorn (Production)
 
 ## 📋 API Endpoints
@@ -93,17 +93,6 @@ python app.py
 
 The API will be available at `http://localhost:5000`
 
-## 🐳 Docker Deployment
-
-### Build and Run
-```bash
-# Build the image
-docker build -t cnic-api .
-
-# Run the container
-docker run -p 8000:8000 cnic-api
-```
-
 ## ☁️ Azure Deployment
 
 ### Quick Deploy to Azure App Service
@@ -148,7 +137,6 @@ For detailed deployment instructions, see [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT
 - File size limits (16MB)
 - Input sanitization
 - Error handling without exposing internals
-- Non-root Docker user
 
 ## 📈 Monitoring
 

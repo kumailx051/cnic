@@ -62,57 +62,19 @@ az webapp deployment source config \
     --manual-integration
 ```
 
-### Method 2: Azure Container Instances
-
-#### Step 1: Create Dockerfile
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-EXPOSE 8000
-
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "api:app"]
-```
-
-#### Step 2: Build and Push to Azure Container Registry
-```bash
-# Create ACR
-az acr create --resource-group cnic-api-rg --name cnicapiregistry --sku Basic
-
-# Build and push
-az acr build --registry cnicapiregistry --image cnic-api:v1 .
-```
-
-#### Step 3: Deploy to Container Instances
-```bash
-az container create \
-    --resource-group cnic-api-rg \
-    --name cnic-api-container \
-    --image cnicapiregistry.azurecr.io/cnic-api:v1 \
-    --cpu 1 \
-    --memory 2 \
-    --ports 8000 \
-    --dns-name-label cnic-api-unique
-```
-
 ## 📁 Files Required for Deployment
 
 ### Core Files
-- `api.py` - Main Flask application (Azure-optimized)
+- `app.py` - Main Flask application (Azure-optimized)
 - `cnic_model.h5` - Your trained model file
 - `requirements.txt` - Python dependencies
-- `main.py` - Entry point for Azure App Service
+- `startup.py` - Entry point for Azure App Service
 
 ### Deployment Files
-- `Procfile` - For Heroku-style deployment
+- `Procfile` - Process configuration
 - `runtime.txt` - Python version specification
-- `azure_config.md` - This configuration guide
+- `web.config` - Windows hosting configuration
+- `gunicorn.conf.py` - Production server configuration
 
 ## 🔧 Environment Variables
 

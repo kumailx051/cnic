@@ -127,3 +127,4 @@ test_images/
 
 # Azure
 .azure/
+azure-pipelines.yml
